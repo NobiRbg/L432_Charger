@@ -31,6 +31,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -75,6 +76,7 @@ TIM_HandleTypeDef htim6;
 
 UART_HandleTypeDef huart2;
 
+osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
 // Variables for AD Conversion
 uint16_t 	ADC_buffer[ADC_BUF_SIZE];
@@ -105,6 +107,8 @@ static void MX_ADC1_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
+void StartDefaultTask(void const * argument);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -159,85 +163,39 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* definition and creation of defaultTask */
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  current_level = MAXCURRENT;
-	  switch(current_level)
-	  {
-		  case(0): duty = 0; break;		//kein Ladestrom
-		  case(1): duty = 8; break;		//max. Ladestrom 4,8  A
-		  case(2): duty = 10; break;	//max. Ladestrom 6    A
-		  case(3): duty = 16; break;	//max. Ladestrom 10   A
-		  case(4): duty = 25; break;	//max. Ladestrom 16   A
-		  case(5): duty = 30; break;	//max. Ladestrom 19   A
-		  case(6): duty = 40; break;	//max. Ladestrom 25,5 A
-		  case(7): duty = 50; break;	//max. Ladestrom 32   A
-		  default: duty = 0; break;		//Fehler Strom = 0
-	  }
-
-	  // Reload timer 2 for PWM
-      TIM2->CCR1 = CH1_DC;
-      CH1_DC = 3926*duty/100;		//duty = Tastverhältnis
-
-	  if(ADC_flag == 1)
-	  {
-	  	  for(ADC_channel=0; ADC_channel < ADC_BUF_SIZE; ADC_channel++)
-	  	  {
-	  		  ADC_Voltage[ADC_channel] = __LL_ADC_CALC_DATA_TO_VOLTAGE(3300,ADC_buffer[ADC_channel],LL_ADC_RESOLUTION_12B);
-	  	  }
-
-	  	  //Send data to UART
-	  	  ptbuffer = &tbuffer[0];
-	  	  strcpy((char *)tbuffer,"\r\nMesswerte: ");
-
-	  	  if(HAL_OK != HAL_UART_Transmit(&huart2, tbuffer, 15, 100))
-	  	  {
-	  		  error_code = 8;
-	  		  Error_Handler();
-	  	  }
-	  	  for(ADC_channel=0; ADC_channel < (ADC_BUF_SIZE/3); ADC_channel++)
-	  	  {
-	  		  value = ADC_Voltage[ADC_channel]+ADC_Voltage[ADC_channel+3]+ADC_Voltage[ADC_channel+6];
-	  		  value = value / 3;
-	  		  strcpy((char *)tbuffer,"\n\r");
-
-	  		  text.letter[0] = '0' + (uint8_t)(value/1000);
-	     		  text.letter[1] = '0' + (uint8_t)((value%1000)/100);
-	     		  text.letter[2] = '0' + (uint8_t)((value%100)/10);
-	  		  text.letter[3] = '0' + (uint8_t)(value%10);
-	  		  text.letter[4] = '\0';
-	  		  strcat((char *)tbuffer,text.str);
-
-	      	  if(HAL_OK != HAL_UART_Transmit(&huart2, tbuffer, 6, 100))
-	      	  {
-	      		  error_code = 8;
-	      		  Error_Handler();
-	      	  }
-	      	  strcpy((char *)tbuffer,"; ");
-	      	  if(HAL_OK != HAL_UART_Transmit(&huart2, tbuffer, 2, 100))
-	      	  {
-	      		  error_code = 8;
-	      		  Error_Handler();
-	      	  }
-	  	  }
-	  	  strcpy((char *)tbuffer,"\r\n");
-	  	  if(HAL_OK != HAL_UART_Transmit(&huart2, tbuffer, 2, 100))
-	  	  {
-	  		  error_code = 8;
-	  		  Error_Handler();
-	  	  }
-//	  	  HAL_Delay(1000);
-	  	  //Restart ADC conversion
-	  	  ADC_flag = 0;
-	  	  if(HAL_OK != HAL_ADC_Start_DMA(&hadc1, ADC_buffer, ADC_BUF_SIZE))
-	  	  {
-	  		  error_code = 8;
-	  		  Error_Handler();
-	  	  }
-
-	  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -508,7 +466,7 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Channel1_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
 
 }
@@ -534,6 +492,120 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 	ADC_flag = 1;
 }
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void const * argument)
+{
+  /* USER CODE BEGIN 5 */
+  /* Infinite loop */
+  for(;;)
+  {
+	  current_level = MAXCURRENT;
+	  switch(current_level)
+	  {
+		  case(0): duty = 0; break;		//kein Ladestrom
+		  case(1): duty = 8; break;		//max. Ladestrom 4,8  A
+		  case(2): duty = 10; break;	//max. Ladestrom 6    A
+		  case(3): duty = 16; break;	//max. Ladestrom 10   A
+		  case(4): duty = 25; break;	//max. Ladestrom 16   A
+		  case(5): duty = 30; break;	//max. Ladestrom 19   A
+		  case(6): duty = 40; break;	//max. Ladestrom 25,5 A
+		  case(7): duty = 50; break;	//max. Ladestrom 32   A
+		  default: duty = 0; break;		//Fehler Strom = 0
+	  }
+
+	  // Reload timer 2 for PWM
+      TIM2->CCR1 = CH1_DC;
+      CH1_DC = 3926*duty/100;		//duty = Tastverhältnis
+
+	  if(ADC_flag == 1)
+	  {
+	  	  for(ADC_channel=0; ADC_channel < ADC_BUF_SIZE; ADC_channel++)
+	  	  {
+	  		  ADC_Voltage[ADC_channel] = __LL_ADC_CALC_DATA_TO_VOLTAGE(3300,ADC_buffer[ADC_channel],LL_ADC_RESOLUTION_12B);
+	  	  }
+
+	  	  //Send data to UART
+	  	  ptbuffer = &tbuffer[0];
+	  	  strcpy((char *)tbuffer,"\r\nMesswerte: ");
+
+	  	  if(HAL_OK != HAL_UART_Transmit(&huart2, tbuffer, 15, 100))
+	  	  {
+	  		  error_code = 8;
+	  		  Error_Handler();
+	  	  }
+	  	  for(ADC_channel=0; ADC_channel < (ADC_BUF_SIZE/3); ADC_channel++)
+	  	  {
+	  		  value = ADC_Voltage[ADC_channel]+ADC_Voltage[ADC_channel+3]+ADC_Voltage[ADC_channel+6];
+	  		  value = value / 3;
+	  		  strcpy((char *)tbuffer,"\n\r");
+
+	  		  text.letter[0] = '0' + (uint8_t)(value/1000);
+	     		  text.letter[1] = '0' + (uint8_t)((value%1000)/100);
+	     		  text.letter[2] = '0' + (uint8_t)((value%100)/10);
+	  		  text.letter[3] = '0' + (uint8_t)(value%10);
+	  		  text.letter[4] = '\0';
+	  		  strcat((char *)tbuffer,text.str);
+
+	      	  if(HAL_OK != HAL_UART_Transmit(&huart2, tbuffer, 6, 100))
+	      	  {
+	      		  error_code = 8;
+	      		  Error_Handler();
+	      	  }
+	      	  strcpy((char *)tbuffer,"; ");
+	      	  if(HAL_OK != HAL_UART_Transmit(&huart2, tbuffer, 2, 100))
+	      	  {
+	      		  error_code = 8;
+	      		  Error_Handler();
+	      	  }
+	  	  }
+	  	  strcpy((char *)tbuffer,"\r\n");
+	  	  if(HAL_OK != HAL_UART_Transmit(&huart2, tbuffer, 2, 100))
+	  	  {
+	  		  error_code = 8;
+	  		  Error_Handler();
+	  	  }
+//	  	  HAL_Delay(1000);
+	  	  //Restart ADC conversion
+	  	  ADC_flag = 0;
+	  	  if(HAL_OK != HAL_ADC_Start_DMA(&hadc1, ADC_buffer, ADC_BUF_SIZE))
+	  	  {
+	  		  error_code = 8;
+	  		  Error_Handler();
+	  	  }
+
+	  }
+	  osDelay(1);
+  }
+  /* USER CODE END 5 */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM1 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM1) {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
