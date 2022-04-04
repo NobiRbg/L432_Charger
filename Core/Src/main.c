@@ -14,6 +14,19 @@
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
+  * Functions:
+  *
+  * Program is generating a PWM signal at pin PA5 (A4) with 1kHz and a duty cycle
+  * as defined by MAXCURRENT
+  * Program is reading 3 ADC signals
+  * 	IN5 = A0 = PA0 = Pin 12 = V_BATT
+  * 	IN8 = A3 = PA3 = Pin 10 = PROX
+  * 	IN11= A6 = PA6 = Pin  7 = CP
+  * to check whether connector is pluged, which max current can be charged and
+  * whether charging has started
+  *
+  * Bugs:
+  * PWM does not work
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
@@ -21,7 +34,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -37,6 +50,15 @@ union convert
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define ADC_BUF_SIZE 9
+#define MAXCURRENT 1
+// 0 = kein Ladestrom
+// 1 = max. Ladestrom 4,8  A
+// 2 = max. Ladestrom 6    A
+// 3 = max. Ladestrom 10   A
+// 4 = max. Ladestrom 16   A
+// 5 = max. Ladestrom 19   A
+// 6 = max. Ladestrom 25,5 A
+// 7 = max. Ladestrom 32   A
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -48,6 +70,7 @@ union convert
  ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
 
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim6;
 
 UART_HandleTypeDef huart2;
@@ -59,10 +82,14 @@ uint8_t		ADC_flag = 0;					//Flag for ADC conversion finished
 uint8_t		ADC_channel = 0;				//Index for ADC channel
 uint16_t	ADC_Voltage[ADC_BUF_SIZE];		//Buffer for ADC result in mV
 
+// Variables for PWM
+uint32_t 	CH1_DC 			= 0;			//Variable for DutyCycle of PWM
+uint32_t 	duty 			= 50;			//duty cycle = 50%
+uint8_t		current_level 	= MAXCURRENT;	//Level of allowed max load current
+
 // Variables for UART
 uint8_t 	tbuffer[30];			//Transmit buffer
 uint8_t 	*ptbuffer;
-//uint8_t 	letter[8];
 uint16_t 	value;
 
 // Variables for Error Handling
@@ -77,6 +104,7 @@ static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -118,7 +146,10 @@ int main(void)
   MX_ADC1_Init();
   MX_TIM6_Init();
   MX_USART2_UART_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+  if(HAL_OK != HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1))
+	  Error_Handler();
   if(HAL_OK != HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED))
 	  Error_Handler();
   if(HAL_OK != HAL_ADC_Start_DMA(&hadc1, ADC_buffer, ADC_BUF_SIZE))
@@ -132,6 +163,24 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  current_level = MAXCURRENT;
+	  switch(current_level)
+	  {
+		  case(0): duty = 0; break;		//kein Ladestrom
+		  case(1): duty = 8; break;		//max. Ladestrom 4,8  A
+		  case(2): duty = 10; break;	//max. Ladestrom 6    A
+		  case(3): duty = 16; break;	//max. Ladestrom 10   A
+		  case(4): duty = 25; break;	//max. Ladestrom 16   A
+		  case(5): duty = 30; break;	//max. Ladestrom 19   A
+		  case(6): duty = 40; break;	//max. Ladestrom 25,5 A
+		  case(7): duty = 50; break;	//max. Ladestrom 32   A
+		  default: duty = 0; break;		//Fehler Strom = 0
+	  }
+
+	  // Reload timer 2 for PWM
+      TIM2->CCR1 = CH1_DC;
+      CH1_DC = 3926*duty/100;		//duty = Tastverhältnis
+
 	  if(ADC_flag == 1)
 	  {
 	  	  for(ADC_channel=0; ADC_channel < ADC_BUF_SIZE; ADC_channel++)
@@ -166,7 +215,7 @@ int main(void)
 	      		  error_code = 8;
 	      		  Error_Handler();
 	      	  }
-	      	  strcpy((char *)tbuffer,", ");
+	      	  strcpy((char *)tbuffer,"; ");
 	      	  if(HAL_OK != HAL_UART_Transmit(&huart2, tbuffer, 2, 100))
 	      	  {
 	      		  error_code = 8;
@@ -313,6 +362,65 @@ static void MX_ADC1_Init(void)
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 1;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 3999;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 2000;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
 
 }
 
