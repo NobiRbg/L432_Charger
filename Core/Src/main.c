@@ -25,8 +25,22 @@
   * to check whether connector is pluged, which max current can be charged and
   * whether charging has started
   *
-  * Bugs:
-  * PWM does not work
+  ******************************************************************************
+  * Functions still missing
+  * Check of level of PWM to check status of charging process
+  * Switching of relais for power supply and communication
+  * Change of PWM duty cycle depending on available energy
+  ******************************************************************************
+  * Known Bugs:
+  * none
+  *
+  ******************************************************************************
+  * Change Log:
+  *
+  * 06.04.22	Change ADC rate to 50us ==> 20 values per period of 1 ms
+  * 06.04.22	Array of AD values to check level of PWM
+  *
+  ******************************************************************************
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
@@ -50,8 +64,10 @@ union convert
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define ADC_BUF_SIZE 9
-#define MAXCURRENT 1
+#define ADC_CHANNELS	3		// 3 AD-Channels
+#define ADC_SAMP_RATE  20		// 20 Conversions per period of 1 ms
+#define ADC_BUF_SIZE ADC_CHANNELS*ADC_SAMP_RATE // ADC Buffer Size
+#define MAXCURRENT 5
 // 0 = kein Ladestrom
 // 1 = max. Ladestrom 4,8  A
 // 2 = max. Ladestrom 6    A
@@ -60,6 +76,16 @@ union convert
 // 5 = max. Ladestrom 19   A
 // 6 = max. Ladestrom 25,5 A
 // 7 = max. Ladestrom 32   A
+#define V_2 200					// Level for 2V at CP
+#define V_4 400					// Level for 4V at CP
+#define V_5 500					// Level for 5V at CP
+#define V_7 700					// Level for 7V at CP
+#define V_8 800					// Level for 8V at CP
+#define V_10 1000				// Level for 10V at CP
+#define V_11 1100				// Level for 11V at CP
+
+#define LEVEL_LIMIT 7			// At least 7 samples within allowed window
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -78,11 +104,32 @@ UART_HandleTypeDef huart2;
 
 osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
+// General Variables
+uint16_t	i = 0;
+uint16_t	j = 0;
+uint16_t	k = 0;
+
 // Variables for AD Conversion
 uint16_t 	ADC_buffer[ADC_BUF_SIZE];
 uint8_t		ADC_flag = 0;					//Flag for ADC conversion finished
 uint8_t		ADC_channel = 0;				//Index for ADC channel
 uint16_t	ADC_Voltage[ADC_BUF_SIZE];		//Buffer for ADC result in mV
+uint32_t	ADC_cum_Val = 0;				//Storage for ADC filtering
+uint32_t	ADC_CP_High = 0;				//High level of CP
+uint32_t	ADC_CP_Low = 0;					//Low level of CP
+uint16_t	ADC_Vbat = 0;					//Filtered Value of VBATT
+uint16_t	ADC_Prox = 0;					//Filtered Value of PROX
+
+// Variables for Control
+uint8_t 	CP_Status = 0;					//Status of Control Pilot
+uint8_t		PROX_Status = 0;				//Status of Proximity Signal
+uint8_t		VBATT_Status = 0;				//Status of VBATT Signal
+uint8_t		CP_Stat_A;						//Counter for CP-Status A (+12V)
+uint8_t		CP_Stat_B;						//Counter for CP-Status B (+9V)
+uint8_t		CP_Stat_C;						//Counter for CP-Status C (+6V)
+uint8_t		CP_Stat_D;						//Counter for CP-Status D (+3V)
+uint8_t		CP_Stat_E;						//Counter for CP-Status E (+0V)
+uint8_t		CP_Stat_F;						//Counter for CP-Status F (-12V)
 
 // Variables for PWM
 uint32_t 	CH1_DC 			= 0;			//Variable for DutyCycle of PWM
@@ -400,7 +447,7 @@ static void MX_TIM6_Init(void)
 
   /* USER CODE END TIM6_Init 1 */
   htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 7999;
+  htim6.Init.Prescaler = 3999;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim6.Init.Period = 999;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -526,10 +573,83 @@ void StartDefaultTask(void const * argument)
 
 	  if(ADC_flag == 1)
 	  {
-	  	  for(ADC_channel=0; ADC_channel < ADC_BUF_SIZE; ADC_channel++)
+		  // Store values in mV in ADC_Voltage Array
+		  // Order of values is:
+		  // channel(0).value(0),
+		  // channel(1).value(0),
+		  // channel(2).value(0),
+		  // channel(0).value(1)...
+		  for(i=0; i < ADC_BUF_SIZE; i++)
 	  	  {
-	  		  ADC_Voltage[ADC_channel] = __LL_ADC_CALC_DATA_TO_VOLTAGE(3300,ADC_buffer[ADC_channel],LL_ADC_RESOLUTION_12B);
+			  ADC_Voltage[i] = __LL_ADC_CALC_DATA_TO_VOLTAGE(3300,ADC_buffer[i],LL_ADC_RESOLUTION_12B);
 	  	  }
+
+		  // Filtering of values
+		  CP_Stat_A = 0;
+		  CP_Stat_B = 0;
+		  CP_Stat_C = 0;
+		  CP_Stat_D = 0;
+		  CP_Stat_E = 0;
+		  CP_Stat_F = 0;
+
+		  ADC_CP_Low = 0;
+		  ADC_CP_High = 0;
+
+  		  for(i=0; i < ADC_BUF_SIZE; i=i+3)
+		  {
+  			  if(ADC_Voltage[i]<V_2)
+  			  {
+  	   	  		ADC_CP_Low = ADC_CP_Low + ADC_Voltage[i];
+  				CP_Stat_E++;
+  			  }
+ 			  if((ADC_Voltage[i]>V_2) & (ADC_Voltage[i]<V_4))
+  			  {
+  				CP_Stat_D++;
+  			  }
+  			  if((ADC_Voltage[i]>V_5) & (ADC_Voltage[i]<V_7))
+  			  {
+  				CP_Stat_C++;
+  			  }
+  			  if((ADC_Voltage[i]>V_8) & (ADC_Voltage[i]<V_10))
+  			  {
+  				CP_Stat_B++;
+  			  }
+  			  if(ADC_Voltage[i]>V_11)
+  			  {
+  				CP_Stat_A++;
+  			  }
+  			  if(ADC_Voltage[i]>=V_2)
+  			  {
+  	   	  		ADC_CP_High = ADC_CP_High + ADC_Voltage[i];
+  			  }
+
+		  }
+
+  		  ADC_CP_Low = ADC_CP_Low /ADC_SAMP_RATE;
+  		  ADC_CP_High = ADC_CP_High /ADC_SAMP_RATE;
+
+  		  if(CP_Stat_A > LEVEL_LIMIT) CP_Status = 0;
+  		  if(CP_Stat_B > LEVEL_LIMIT) CP_Status = 1;
+  		  if(CP_Stat_C > LEVEL_LIMIT) CP_Status = 2;
+  		  if(CP_Stat_D > LEVEL_LIMIT) CP_Status = 3;
+  		  if(CP_Stat_E > LEVEL_LIMIT) CP_Status = 4;
+  		  if(CP_Stat_F > LEVEL_LIMIT) CP_Status = 5;
+
+		  ADC_cum_Val = 0;
+
+  		  for(i=1; i < ADC_BUF_SIZE; i=i+3)
+	  	  {
+  			  ADC_cum_Val = ADC_cum_Val + ADC_Voltage[i];
+	  	  }
+  		  ADC_Prox = ADC_cum_Val / ADC_SAMP_RATE;
+
+  		  ADC_cum_Val = 0;
+
+  		  for(i=2; i < ADC_BUF_SIZE; i=i+3)
+	  	  {
+  			  ADC_cum_Val = ADC_cum_Val + ADC_Voltage[i];
+	  	  }
+		  ADC_Vbat = ADC_cum_Val / ADC_SAMP_RATE;
 
 	  	  //Send data to UART
 	  	  ptbuffer = &tbuffer[0];
@@ -540,10 +660,12 @@ void StartDefaultTask(void const * argument)
 	  		  error_code = 8;
 	  		  Error_Handler();
 	  	  }
-	  	  for(ADC_channel=0; ADC_channel < (ADC_BUF_SIZE/3); ADC_channel++)
+	  	  for(ADC_channel=0; ADC_channel <= (ADC_CHANNELS); ADC_channel++)
 	  	  {
-	  		  value = ADC_Voltage[ADC_channel]+ADC_Voltage[ADC_channel+3]+ADC_Voltage[ADC_channel+6];
-	  		  value = value / 3;
+	  		  if(ADC_channel == 0) value = ADC_CP_Low;
+	  		  if(ADC_channel == 1) value = ADC_CP_High;
+	  		  if(ADC_channel == 2) value = ADC_Prox;
+	  		  if(ADC_channel == 3) value = ADC_Vbat;
 	  		  strcpy((char *)tbuffer,"\n\r");
 
 	  		  text.letter[0] = '0' + (uint8_t)(value/1000);
