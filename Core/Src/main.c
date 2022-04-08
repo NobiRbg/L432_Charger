@@ -32,13 +32,15 @@
   * Change of PWM duty cycle depending on available energy
   ******************************************************************************
   * Known Bugs:
-  * none
+  * ADC zu immernoch langsam um PWM abzutasten
   *
   ******************************************************************************
   * Change Log:
   *
   * 06.04.22	Change ADC rate to 50us ==> 20 values per period of 1 ms
   * 06.04.22	Array of AD values to check level of PWM
+  * 06.04.22	Flags für Spannungslevels (Status A-F) werden gesetzt
+  * 06.04.22	Prescaler für ADC von 999 auf 99
   *
   ******************************************************************************
   */
@@ -76,13 +78,13 @@ union convert
 // 5 = max. Ladestrom 19   A
 // 6 = max. Ladestrom 25,5 A
 // 7 = max. Ladestrom 32   A
-#define V_2 200					// Level for 2V at CP
-#define V_4 400					// Level for 4V at CP
-#define V_5 500					// Level for 5V at CP
-#define V_7 700					// Level for 7V at CP
-#define V_8 800					// Level for 8V at CP
-#define V_10 1000				// Level for 10V at CP
-#define V_11 1100				// Level for 11V at CP
+#define V_2 250					// Level for 2V at CP
+#define V_4 750					// Level for 4V at CP
+#define V_5 1000				// Level for 5V at CP
+#define V_7 1500				// Level for 7V at CP
+#define V_8 1750				// Level for 8V at CP
+#define V_10 2250				// Level for 10V at CP
+#define V_11 2500				// Level for 11V at CP
 
 #define LEVEL_LIMIT 7			// At least 7 samples within allowed window
 
@@ -449,7 +451,7 @@ static void MX_TIM6_Init(void)
   htim6.Instance = TIM6;
   htim6.Init.Prescaler = 3999;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 999;
+  htim6.Init.Period = 99;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {
@@ -625,8 +627,8 @@ void StartDefaultTask(void const * argument)
 
 		  }
 
-  		  ADC_CP_Low = ADC_CP_Low /ADC_SAMP_RATE;
-  		  ADC_CP_High = ADC_CP_High /ADC_SAMP_RATE;
+  		  ADC_CP_Low = ADC_CP_Low / ADC_SAMP_RATE;
+  		  ADC_CP_High = ADC_CP_High / ADC_SAMP_RATE;
 
   		  if(CP_Stat_A > LEVEL_LIMIT) CP_Status = 0;
   		  if(CP_Stat_B > LEVEL_LIMIT) CP_Status = 1;
